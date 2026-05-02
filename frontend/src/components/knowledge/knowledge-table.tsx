@@ -123,12 +123,10 @@ export function KnowledgeTable({ sources, loading, onRefresh }: Props) {
               </TableCell>
               <TableCell className="text-right">
                 <DropdownMenu>
-                  <DropdownMenuTrigger>
-                    <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                  <DropdownMenuTrigger className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent hover:text-accent-foreground">
                       <span className="material-symbols-outlined text-base">
                         more_vert
                       </span>
-                    </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem

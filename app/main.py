@@ -75,11 +75,10 @@ async def lifespan(app: FastAPI):
     # Seed default admin if no admin exists yet
     await seed_default_admin()
 
-    # Start MCP session manager
-    async with mcp_server.session_manager.run():
-        logger.success("Arkon MCP Server ready at /mcp")
-        logger.success("Arkon API started successfully")
-        yield
+    # MCP server ready
+    logger.success("Arkon MCP Server ready at /mcp")
+    logger.success("Arkon API started successfully")
+    yield
 
     # Shutdown Neo4j
     try:
@@ -108,7 +107,7 @@ app.add_middleware(
 
 # --- Mount MCP Server ---
 # Claude Desktop connects to: https://your-server/mcp
-app.mount("/mcp", mcp_server.streamable_http_app())
+app.mount("/mcp", mcp_server.http_app(stateless_http=True))
 
 # --- REST API Routers ---
 from app.routers import sources, notes, contacts, search, auth, admin_settings, categories, rbac, knowledge_types  # noqa: E402

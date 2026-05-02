@@ -43,7 +43,6 @@ def create_mcp_server() -> FastMCP:
             "retrieve specific knowledge, find relevant contacts, "
             "and browse categories. Always cite sources when answering."
         ),
-        stateless_http=True,  # Important for multi-replica deployments
     )
 
     # Register all tools and resources
