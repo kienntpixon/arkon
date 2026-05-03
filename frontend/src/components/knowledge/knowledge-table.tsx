@@ -54,6 +54,8 @@ type Source = {
   file_name?: string;
   source_type?: string;
   status: string;
+  progress?: number;
+  progress_message?: string;
   knowledge_type_id?: string;
   knowledge_type_name?: string;
   knowledge_type_color?: string;
@@ -191,7 +193,7 @@ export function KnowledgeTable({ sources, types, departments, loading, onRefresh
                   )}
                 </TableCell>
                 <TableCell>
-                  <StatusDot status={source.status} />
+                  <StatusDot source={source} />
                 </TableCell>
                 <TableCell className="text-xs text-muted-foreground">
                   {new Date(source.created_at).toLocaleDateString()}
@@ -247,7 +249,7 @@ export function KnowledgeTable({ sources, types, departments, loading, onRefresh
   );
 }
 
-function StatusDot({ status }: { status: string }) {
+function StatusDot({ source }: { source: Source }) {
   const colors: Record<string, string> = {
     ready: "bg-green-500",
     processing: "bg-yellow-500",
@@ -255,10 +257,27 @@ function StatusDot({ status }: { status: string }) {
     pending: "bg-muted-foreground",
   };
 
+  const status = source.status;
+
   return (
-    <div className="flex items-center gap-1.5">
-      <span className={`w-2 h-2 rounded-full ${colors[status] || colors.pending}`} />
-      <span className="text-xs capitalize text-muted-foreground">{status}</span>
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-1.5">
+        <span className={`w-2 h-2 rounded-full ${colors[status] || colors.pending}`} />
+        <span className="text-xs capitalize text-muted-foreground">{status}</span>
+        {status === "processing" && source.progress !== undefined && (
+          <span className="text-xs text-muted-foreground">({source.progress}%)</span>
+        )}
+      </div>
+      {(status === "processing" || status === "pending") && source.progress_message && (
+        <span className="text-[10px] text-muted-foreground truncate max-w-[150px]" title={source.progress_message}>
+          {source.progress_message}
+        </span>
+      )}
+      {status === "error" && source.progress_message && (
+        <span className="text-[10px] text-destructive truncate max-w-[150px]" title={source.progress_message}>
+          {source.progress_message}
+        </span>
+      )}
     </div>
   );
 }

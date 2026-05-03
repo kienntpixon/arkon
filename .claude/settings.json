@@ -2,7 +2,17 @@
   "permissions": {
     "allow": [
       "Bash(rtk tree *)",
-      "Bash(rtk grep *)"
+      "Bash(rtk grep *)",
+      "Bash(Get-ChildItem -Path \"d:\\\\arkon\\\\frontend\\\\src\" -Recurse -Directory)",
+      "Bash(Select-Object FullName)",
+      "Bash(Get-ChildItem -Path \"d:\\\\arkon\\\\frontend\\\\src\\\\components\" -Directory)",
+      "Bash(Select-Object -ExpandProperty Name)",
+      "PowerShell(head -50)",
+      "Bash(Get-ChildItem -Path \"d:\\\\arkon\\\\frontend\\\\src\\\\app\\\\\\(portal\\)\" -Recurse)",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(Sort-Object)",
+      "Bash(npm install *)",
+      "Bash(rtk tsc *)"
     ]
   }
 }

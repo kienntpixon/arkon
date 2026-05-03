@@ -4,15 +4,21 @@ import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { PageHeader } from "@/components/shared/page-header";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { KnowledgeTable } from "@/components/knowledge/knowledge-table";
 import { KnowledgeFilters } from "@/components/knowledge/knowledge-filters";
 import { UploadDialog } from "@/components/knowledge/upload-dialog";
+import { KnowledgeTypeCards } from "@/components/types/knowledge-type-cards";
+import { KnowledgeTypeDialog } from "@/components/types/knowledge-type-dialog";
 
 export type KnowledgeType = {
   id: string;
   slug: string;
   name: string;
   color: string;
+  description?: string;
+  sort_order: number;
+  source_count?: number;
 };
 
 export type Department = {
@@ -26,6 +32,8 @@ export type Source = {
   file_name?: string;
   source_type?: string;
   status: string;
+  progress?: number;
+  progress_message?: string;
   knowledge_type_id?: string;
   knowledge_type_name?: string;
   knowledge_type_color?: string;
@@ -35,6 +43,8 @@ export type Source = {
 };
 
 export default function KnowledgePage() {
+  const [activeTab, setActiveTab] = useState("documents");
+  
   const [sources, setSources] = useState<Source[]>([]);
   const [types, setTypes] = useState<KnowledgeType[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -42,9 +52,12 @@ export default function KnowledgePage() {
   const [selectedDepartment, setSelectedDepartment] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploadOpen, setUploadOpen] = useState(false);
+  
+  const [typeDialogOpen, setTypeDialogOpen] = useState(false);
+  const [editType, setEditType] = useState<KnowledgeType | null>(null);
 
-  const loadSources = useCallback(async () => {
-    setLoading(true);
+  const loadSources = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const params = new URLSearchParams();
       if (selectedType) {
@@ -57,28 +70,41 @@ export default function KnowledgePage() {
       const data = await api<Source[]>(`/api/sources${query}`);
       setSources(Array.isArray(data) ? data : []);
     } catch {
-      setSources([]);
+      if (!silent) setSources([]);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [selectedType, selectedDepartment, types]);
 
+  // Polling cho trạng thái tài liệu
   useEffect(() => {
-    async function loadMeta() {
-      try {
-        const [typesData, deptsData] = await Promise.all([
-          api<KnowledgeType[]>("/api/knowledge-types"),
-          api<Department[]>("/api/departments"),
-        ]);
-        setTypes(typesData);
-        setDepartments(deptsData);
-      } catch {
-        setTypes([]);
-        setDepartments([]);
-      }
+    const hasPending = sources.some((s) => s.status === "pending" || s.status === "processing");
+    if (!hasPending) return;
+
+    const interval = setInterval(() => {
+      loadSources(true);
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [sources, loadSources]);
+
+  const loadMeta = useCallback(async () => {
+    try {
+      const [typesData, deptsData] = await Promise.all([
+        api<KnowledgeType[]>("/api/knowledge-types"),
+        api<Department[]>("/api/departments"),
+      ]);
+      setTypes(typesData);
+      setDepartments(deptsData);
+    } catch {
+      setTypes([]);
+      setDepartments([]);
     }
-    loadMeta();
   }, []);
+
+  useEffect(() => {
+    loadMeta();
+  }, [loadMeta]);
 
   useEffect(() => {
     loadSources();
@@ -88,44 +114,73 @@ export default function KnowledgePage() {
     <>
       <PageHeader
         title="Knowledge Base"
-        description="Manage and organize your organization's documents and data."
+        description="Manage and organize your organization's documents and categories."
         action={
-          <Button
-            onClick={() => setUploadOpen(true)}
-            className="bg-primary text-primary-foreground hover:bg-primary/90"
-          >
-            <span className="material-symbols-outlined text-base mr-1">
-              add
-            </span>
-            Upload Document
-          </Button>
+          activeTab === "documents" ? (
+            <Button
+              onClick={() => setUploadOpen(true)}
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              <span className="material-symbols-outlined text-base mr-1">add</span>
+              Upload Document
+            </Button>
+          ) : (
+            <Button
+              onClick={() => { setEditType(null); setTypeDialogOpen(true); }}
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              <span className="material-symbols-outlined text-base mr-1">add</span>
+              Add Category
+            </Button>
+          )
         }
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        {/* Filters Sidebar */}
-        <div className="lg:col-span-1">
-          <KnowledgeFilters
-            types={types}
-            selectedType={selectedType}
-            onSelectType={setSelectedType}
-            departments={departments}
-            selectedDepartment={selectedDepartment}
-            onSelectDepartment={setSelectedDepartment}
-          />
-        </div>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className="mb-6">
+          <TabsTrigger value="documents" className="gap-2">
+            <span className="material-symbols-outlined text-[18px]">files</span>
+            Documents
+          </TabsTrigger>
+          <TabsTrigger value="types" className="gap-2">
+            <span className="material-symbols-outlined text-[18px]">category</span>
+            Categories
+          </TabsTrigger>
+        </TabsList>
 
-        {/* Documents Table */}
-        <div className="lg:col-span-3">
-          <KnowledgeTable
-            sources={sources}
+        <TabsContent value="documents" className="mt-0 outline-none">
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            <div className="lg:col-span-1">
+              <KnowledgeFilters
+                types={types}
+                selectedType={selectedType}
+                onSelectType={setSelectedType}
+                departments={departments}
+                selectedDepartment={selectedDepartment}
+                onSelectDepartment={setSelectedDepartment}
+              />
+            </div>
+            <div className="lg:col-span-3">
+              <KnowledgeTable
+                sources={sources}
+                types={types}
+                departments={departments}
+                loading={loading}
+                onRefresh={loadSources}
+              />
+            </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="types" className="mt-0 outline-none">
+          <KnowledgeTypeCards
             types={types}
-            departments={departments}
-            loading={loading}
-            onRefresh={loadSources}
+            loading={types.length === 0 && loading}
+            onEdit={(t) => { setEditType(t); setTypeDialogOpen(true); }}
+            onRefresh={loadMeta}
           />
-        </div>
-      </div>
+        </TabsContent>
+      </Tabs>
 
       <UploadDialog
         open={uploadOpen}
@@ -133,6 +188,13 @@ export default function KnowledgePage() {
         types={types}
         departments={departments}
         onUploaded={loadSources}
+      />
+
+      <KnowledgeTypeDialog
+        open={typeDialogOpen}
+        onOpenChange={setTypeDialogOpen}
+        knowledgeType={editType}
+        onSaved={loadMeta}
       />
     </>
   );

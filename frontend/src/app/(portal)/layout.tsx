@@ -36,11 +36,11 @@ export default function PortalLayout({
   if (!user) return null;
 
   return (
-    <div className="min-h-screen flex bg-background">
+    <div className="h-screen flex bg-background overflow-hidden">
       <Sidebar />
-      <main className="flex-1 md:ml-60 flex flex-col min-h-screen">
+      <main className="flex-1 md:ml-60 flex flex-col h-screen overflow-hidden">
         <Header />
-        <div className="p-6 md:p-8 lg:p-10 max-w-7xl mx-auto w-full flex flex-col gap-8">
+        <div className="p-6 md:p-8 lg:p-10 w-full flex-1 min-h-0 flex flex-col gap-8 overflow-y-auto">
           {children}
         </div>
       </main>

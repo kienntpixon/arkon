@@ -4,16 +4,15 @@
 
 | Tool | Version | Purpose |
 |---|---|---|
-| Python | 3.11 — 3.12 | Backend runtime |
+| Python | 3.11 — 3.14 | Backend runtime |
 | Node.js | 20+ | Frontend (Next.js) |
 | PostgreSQL | 15+ | Main database (with pgvector extension) |
 | Redis | 7+ | Background job queue |
 | MinIO | Latest | S3-compatible file storage |
-| Neo4j | 5+ | Knowledge graph (optional) |
 
 ## 1. Infrastructure
 
-Start PostgreSQL, Redis, MinIO, Neo4j. If you have Docker:
+Start PostgreSQL, Redis, and MinIO. If you have Docker:
 
 ```bash
 # PostgreSQL with pgvector
@@ -33,26 +32,21 @@ docker run -d --name arkon-minio \
   -e MINIO_ROOT_PASSWORD=minioadmin123 \
   -p 9000:9000 -p 9001:9001 \
   minio/minio server /data --console-address ":9001"
-
-# Neo4j (optional — only if ENABLE_ENTITY_EXTRACTION=true)
-docker run -d --name arkon-neo4j \
-  -e NEO4J_AUTH=neo4j/your-neo4j-password \
-  -p 7474:7474 -p 7687:7687 \
-  neo4j:5
 ```
 
 ## 2. Environment
 
 ```bash
-# Copy env template
 cp .env.example .env
+```
 
-# Edit .env — set your values:
-#   SECRET_KEY           → generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
-#   DEFAULT_ADMIN_EMAIL  → email for initial admin account
-#   DEFAULT_ADMIN_PASSWORD → password for initial admin account
-#   MINIO_SECRET_KEY     → match your MinIO password
-#   NEO4J_PASSWORD       → match your Neo4j password (if using)
+Minimum values to set in `.env`:
+
+```env
+SECRET_KEY=<generate with: python -c "import secrets; print(secrets.token_urlsafe(32))">
+DEFAULT_ADMIN_EMAIL=admin@yourcompany.com
+DEFAULT_ADMIN_PASSWORD=change-this-password
+MINIO_SECRET_KEY=minioadmin123   # match your MinIO password above
 ```
 
 ## 3. Install Dependencies
@@ -60,8 +54,6 @@ cp .env.example .env
 ```bash
 # Create virtual environment
 python -m venv .venv
-# OR
-py -3.11 -m venv .venv
 
 # Activate
 # Windows:
@@ -69,20 +61,18 @@ py -3.11 -m venv .venv
 # macOS/Linux:
 source .venv/bin/activate
 
-# Install all dependencies
+# Install
 pip install -e ".[dev]"
 ```
 
 ## 4. Database Migration
 
 ```bash
-# Run migrations (creates all tables)
 alembic upgrade head
 ```
 
-> Migration creates: `sources`, `source_chunks`, `source_insights`, `chunk_images`,
-> `knowledge_types`, `departments`, `employees`, `knowledge_scopes`,
-> `contacts`, `notes`, `admin_configs`
+> Creates: `sources`, `wiki_pages`, `wiki_links`, `knowledge_types`, `departments`,
+> `employees`, `knowledge_scopes`, `contacts`, `notes`, `app_config`, and more.
 >
 > Also seeds 5 default knowledge types: General, SOP, Product, Project, Customer.
 
@@ -94,13 +84,13 @@ npm install
 ```
 
 Create `frontend/.env.local`:
-```bash
+```env
 NEXT_PUBLIC_API_URL=http://localhost:5055
 ```
 
-## 6. Start Backend
+## 6. Start Services
 
-You need **2 terminals** — one for the API, one for the background worker.
+You need **3 terminals**.
 
 ### Terminal 1: API Server
 
@@ -110,7 +100,6 @@ uvicorn app.main:app --host 0.0.0.0 --port 5055 --reload
 
 On first startup, Arkon will:
 - Create the MinIO bucket if it doesn't exist
-- Connect to Neo4j (if available)
 - **Auto-create the default admin account** from `.env` (if no admin exists yet)
 
 You should see:
@@ -126,7 +115,7 @@ SUCCESS  Arkon API started successfully
 python -m arq app.worker.WorkerSettings
 ```
 
-The worker processes document ingestion (chunking, embedding, entity extraction).
+The worker processes document ingestion: text extraction, image captioning, and LLM wiki compilation. Documents will stay at `pending` status until the worker is running.
 
 ### Terminal 3: Frontend
 
@@ -135,9 +124,19 @@ cd frontend
 npm run dev
 ```
 
-Open http://localhost:3000 — login with the admin credentials from `.env`.
+Open http://localhost:3000 — log in with the admin credentials from `.env`.
 
-## 7. Verify
+## 7. Configure AI Providers
+
+After first login, go to **Admin Portal → Settings** and configure:
+
+- **Embedding model** — required for wiki page search (e.g. `text-embedding-004` / Google)
+- **LLM** — required for wiki compilation; choose a model with a large context window (e.g. `gemini-2.5-pro`, `gpt-4o`, `claude-sonnet-4-5`)
+- **Vision model** — optional, enables image captioning during ingestion
+
+Without embedding + LLM config, document uploads will queue but wiki compilation will fail.
+
+## 8. Verify
 
 ### API Health
 
@@ -175,16 +174,16 @@ Response:
 
 Use the `access_token` as `Authorization: Bearer <token>` for all admin API calls.
 
-## 8. API Overview
+## 9. API Overview
 
-### Auth (public)
+### Auth
 | Method | Path | Description |
 |---|---|---|
 | POST | `/api/auth/login` | Login (email + password) |
 | GET | `/api/auth/me` | Current user profile |
 | POST | `/api/auth/change-password` | Change password |
 
-### Admin (requires role=admin)
+### Admin (requires `role=admin`)
 | Method | Path | Description |
 |---|---|---|
 | GET/PUT | `/api/settings` | Provider config (AI keys, models) |
@@ -194,21 +193,26 @@ Use the `access_token` as `Authorization: Bearer <token>` for all admin API call
 | CRUD | `/api/knowledge-types` | Manage knowledge types |
 | CRUD | `/api/scopes` | Manage knowledge scopes |
 | CRUD | `/api/sources` | Manage documents |
+| POST | `/api/sources/upload` | Upload a file |
+| POST | `/api/sources/url` | Add a URL source |
+| POST | `/api/sources/:id/recompile` | Re-run wiki compilation for a source |
 | CRUD | `/api/contacts` | Manage contacts |
 
-### Employee (requires login)
+### Wiki (requires login)
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/my/mcp-token` | Get own MCP token |
-| DELETE | `/api/my/mcp-token` | Revoke own MCP token |
-| POST | `/api/search` | Search knowledge base |
+| GET | `/api/wiki/pages` | List wiki pages (filterable) |
+| GET | `/api/wiki/pages/:slug` | Get a wiki page with backlinks |
+| GET | `/api/wiki/index` | `_index` catalog page |
+| GET | `/api/wiki/log` | `_log` chronological log |
+| GET | `/api/wiki/graph` | Graph nodes + edges (full or neighborhood) |
 
 ### MCP (Claude Desktop)
 | Path | Auth | Description |
 |---|---|---|
 | `/mcp` | `Bearer ark_xxx` (MCP token) | MCP endpoint for Claude Desktop |
 
-## 9. Connect Claude Desktop
+## 10. Connect Claude Desktop
 
 After generating an MCP token for an employee, add to Claude Desktop config (`claude_desktop_config.json`):
 
@@ -225,24 +229,6 @@ After generating an MCP token for an employee, add to Claude Desktop config (`cl
 }
 ```
 
-## 10. Configure AI Providers
-
-After first login, go to API or Admin Portal to configure:
-
-```bash
-# Set embedding provider (required for document ingestion)
-curl -X PUT http://localhost:5055/api/settings \
-  -H "Authorization: Bearer <admin-jwt>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "embedding_provider": "google",
-    "embedding_model": "text-embedding-004",
-    "embedding_api_key": "your-google-api-key"
-  }'
-```
-
-Without embedding config, document uploads will fail at the chunking/embedding step.
-
 ## Troubleshooting
 
 | Issue | Solution |
@@ -250,8 +236,8 @@ Without embedding config, document uploads will fail at the chunking/embedding s
 | `connection refused` on port 5432 | PostgreSQL is not running |
 | `pgvector extension not found` | Use `pgvector/pgvector` Docker image, or install pgvector manually |
 | `No admin created` on startup | Check `DEFAULT_ADMIN_EMAIL` / `DEFAULT_ADMIN_PASSWORD` in `.env` |
-| Documents stuck at `processing` | Worker is not running — start Terminal 2 |
-| `Neo4j not available` warning | Normal if `ENABLE_ENTITY_EXTRACTION=false` |
+| Documents stuck at `pending` | Worker is not running — start Terminal 2 |
+| Wiki pages not created after upload | Check LLM provider config in Settings; check worker logs for errors |
 | Frontend shows "API Error" | Backend not running, or `NEXT_PUBLIC_API_URL` incorrect in `frontend/.env.local` |
-| CORS errors in browser | Check `CORS_ORIGINS` in backend `.env` includes `http://localhost:3000` |
+| CORS errors in browser | Add `http://localhost:3000` to `CORS_ORIGINS` in backend `.env` |
 | `requires Python 3.11` error | Use `py -3.11 -m venv .venv` to create venv with correct version |
