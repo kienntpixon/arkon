@@ -1,10 +1,10 @@
 ![Arkon Banner](docs/assets/banner.png)
 
-# Arkon — Enterprise AI Knowledge Hub
+# Arkon - Enterprise AI Knowledge Hub
 
-**Connect your organization's knowledge to Claude. Self-hosted, on-premise.**
+**Connect your organization's knowledge to any Ai Client. Self-hosted, on-premise.**
 
-Arkon is the central layer between your documents and your employees' AI clients. Upload your SOPs, policies, product specs, and internal docs — Arkon compiles them into a structured knowledge wiki and serves it directly to Claude via MCP. Every employee gets the right context, automatically, without copy-pasting.
+Arkon is the central layer between your documents and your employees' AI clients. Upload your SOPs, policies, product specs, and internal docs - Arkon compiles them into a structured knowledge wiki and serves it directly to Claude via MCP. Every employee gets the right context, automatically, without copy-pasting.
 
 [Setup Guide](docs/SETUP.md) · [Architecture](docs/ARCHITECTURE.md) · [Wiki System](docs/WIKI.md) · [MCP & Claude](docs/MCP.md) · [AI Skills](docs/SKILLS.md) · [Access Control](docs/ACCESS-CONTROL.md)
 
@@ -12,33 +12,17 @@ Arkon is the central layer between your documents and your employees' AI clients
 
 ## The problem
 
-Most organizations adopt AI team-by-team, with no shared knowledge, inconsistent context, and no visibility into what information Claude is actually working with. Every employee manually pastes documents, repeats the same background, and gets different answers depending on what they remembered to include.
+Most organizations adopt AI team-by-team, with no shared knowledge, inconsistent context, and no visibility into what information Ai Client is actually working with. Every employee manually pastes documents, repeats the same background, and gets different answers depending on what they remembered to include.
 
-Arkon treats your AI client as a managed organizational resource — not a personal chatbot.
+![Problem](docs/assets/Problem.png)
+
+Arkon treats your AI client as a managed organizational resource - not a personal chatbot.
 
 ---
 
 ## How it works
 
-```
-Upload document
-      │
-      ▼
- Extract text + images (PDF, DOCX, URLs, ...)
-      │
-      ▼
- LLM Wiki Agent analyzes and writes structured knowledge:
-   · Creates / updates wiki pages (entities, concepts, topics)
-   · Links related pages via [[wikilinks]]
-   · Each new document enriches the same wiki — no duplicates
-      │
-      ▼
- Wiki stored in PostgreSQL + pgvector
-      │
-      ▼
- Employee opens Claude → connects via MCP token
- Claude reads compiled wiki, not raw document chunks
-```
+![How it works](docs/assets/HowItWorks.png)
 
 Knowledge compounds. Every document you add enriches the existing wiki rather than creating isolated fragments. By the time an employee asks Claude a question, the answer has already been synthesized from dozens of sources.
 
@@ -47,7 +31,7 @@ Knowledge compounds. Every document you add enriches the existing wiki rather th
 ## Features
 
 ### Knowledge Wiki
-Documents are compiled into a persistent, interlinked wiki by an LLM agent — not just indexed. Each page covers a specific entity, concept, or topic. Pages cross-reference each other. The wiki grows smarter as more documents are added.
+Documents are compiled into a persistent, interlinked wiki by an LLM agent - not just indexed. Each page covers a specific entity, concept, or topic. Pages cross-reference each other. The wiki grows smarter as more documents are added.
 
 - Three-panel wiki browser: page tree, content, backlinks & outlinks
 - Full-text and semantic search
@@ -69,7 +53,7 @@ Create a workspace → add members from any department → attach documents. Eac
 Upload custom agent packages and make them available to employees through Claude. Skills are versioned, department-scoped, and distributed via MCP.
 
 ### MCP Server
-Employees connect Claude Desktop (or any MCP client) to Arkon using a personal token. Claude gets access to the compiled wiki, raw source documents, and AI skills — all filtered to the employee's permission scope.
+Employees connect Claude Desktop (or any MCP client) to Arkon using a personal token. Claude gets access to the compiled wiki, raw source documents, and AI skills - all filtered to the employee's permission scope.
 
 → See [MCP & Claude](docs/MCP.md) for the full tool reference.
 
@@ -90,7 +74,7 @@ cd arkon
 cp .env.example .env
 ```
 
-Edit `.env` — set at minimum:
+Edit `.env` - set at minimum:
 
 ```env
 SECRET_KEY=<run: python -c "import secrets; print(secrets.token_urlsafe(32))">
@@ -135,29 +119,7 @@ Add this to `claude_desktop_config.json` and restart Claude Desktop. The employe
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────┐
-│                   On-Premise Server                  │
-│                                                      │
-│  ┌─────────────────┐   ┌────────────────────────┐   │
-│  │   Admin Portal  │   │    Arkon API + MCP     │   │
-│  │   (Next.js)     │──▶│    (FastAPI)           │   │
-│  │                 │   │                        │   │
-│  │  · Wiki browser │   │  · LLM Wiki Agent      │   │
-│  │  · Documents    │   │  · Permission engine   │   │
-│  │  · Workspaces   │   │  · MCP tool server     │   │
-│  │  · RBAC         │   │  · Background worker   │   │
-│  │  · Skills       │   │                        │   │
-│  └─────────────────┘   └──────────┬─────────────┘   │
-│                                   │                  │
-│         PostgreSQL + pgvector     │ MinIO    Redis   │
-└───────────────────────────────────┼──────────────────┘
-                                    │ MCP (HTTPS)
-                       ┌────────────┼────────────┐
-                       │            │            │
-                  Claude Desktop  Claude.ai   Any MCP
-                  (employees)     (web)       client
-```
+![Arkon System Design](docs/assets/Architecture.png)
 
 **Stack:** FastAPI · PostgreSQL + pgvector · Redis (arq) · MinIO · Next.js · Tailwind CSS
 
@@ -171,16 +133,16 @@ Add this to `claude_desktop_config.json` and restart Claude Desktop. The employe
 
 ## Roadmap
 
-- [x] LLM Wiki Agent — documents compiled into persistent, interlinked wiki
-- [x] Wiki browser — three-panel layout with graph visualization
+- [x] LLM Wiki Agent - documents compiled into persistent, interlinked wiki
+- [x] Wiki browser - three-panel layout with graph visualization
 - [x] MCP Server with scoped knowledge access
-- [x] Ingestion pipeline — PDF, DOCX, DOC, URLs, images with vision captions
-- [x] Workspaces — scoped wiki, documents, and members
-- [x] Wiki draft & revision system — propose, review, approve, rollback
-- [x] AI Skills — versioned, department-scoped agent packages
-- [x] Full RBAC — department permissions + workspace membership roles
+- [x] Ingestion pipeline - PDF, DOCX, DOC, URLs, images with vision captions
+- [x] Workspaces - scoped wiki, documents, and members
+- [x] Wiki draft & revision system - propose, review, approve, rollback
+- [x] AI Skills - versioned, department-scoped agent packages
+- [x] Full RBAC - department permissions + workspace membership roles
 - [x] Audit log
-- [ ] Arkon CLI — one-command employee setup
+- [ ] Arkon CLI - one-command employee setup
 - [ ] Notification system for draft review requests
 - [ ] Usage analytics dashboard
 
@@ -192,7 +154,7 @@ Arkon is licensed under the [PolyForm Noncommercial License 1.0.0](https://polyf
 
 Free to use for internal tooling, research, personal projects, and non-profit use.
 
-**Need a commercial license or custom integration?** We help organizations integrate Claude, custom AI agents, and MCP servers into their existing infrastructure — from connecting to internal databases and legacy systems to building purpose-built agents for specific business processes.
+**Need a commercial license or custom integration?** We help organizations integrate Claude, custom AI agents, and MCP servers into their existing infrastructure - from connecting to internal databases and legacy systems to building purpose-built agents for specific business processes.
 
 [Get in touch →](https://bitsness.vn)
 
