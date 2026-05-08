@@ -119,11 +119,13 @@ from app.routers import (  # noqa: E402
     rbac,
     roles,
     skills,
+    skill_contributions,
     sources,
     wiki,
     wiki_drafts,
     wiki_images,
 )
+
 
 app.include_router(auth.router, prefix="/api", tags=["auth"])
 app.include_router(sources.router, prefix="/api", tags=["sources"])
@@ -139,6 +141,7 @@ app.include_router(projects.router, prefix="/api", tags=["projects"])
 app.include_router(roles.router, prefix="/api", tags=["roles"])
 app.include_router(audit.router, prefix="/api", tags=["audit"])
 app.include_router(skills.router, prefix="/api", tags=["skills"])
+app.include_router(skill_contributions.router, prefix="/api", tags=["skill-contributions"])
 
 
 @app.get("/")

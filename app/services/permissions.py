@@ -33,6 +33,7 @@ ALL_PERMISSIONS: list[str] = [
     "skill:create:own_dept", "skill:create:all",
     "skill:edit:own_dept", "skill:edit:all",
     "skill:delete:own_dept", "skill:delete:all",
+    "skill:contribution:create", "skill:contribution:review",
 
     # Organization
     "org:departments:read", "org:departments:manage",
@@ -56,6 +57,8 @@ EMPLOYEE_DEFAULT_PERMISSIONS: list[str] = [
     "wiki:read:own_dept",
     "wiki:write:own_dept",
     "skill:read:own_dept",
+    "skill:contribution:create",
+    "org:departments:read",
 ]
 
 # ---------------------------------------------------------------------------
@@ -79,6 +82,7 @@ PERMISSION_GROUPS: dict[str, list[str]] = {
         "skill:create:own_dept", "skill:create:all",
         "skill:edit:own_dept", "skill:edit:all",
         "skill:delete:own_dept", "skill:delete:all",
+        "skill:contribution:create", "skill:contribution:review",
     ],
     "Organization": [
         "org:departments:read", "org:departments:manage",
@@ -121,6 +125,8 @@ PERMISSION_LABELS: dict[str, str] = {
     "skill:edit:all":         "Edit all AI skills",
     "skill:delete:own_dept":  "Delete AI skills (own department)",
     "skill:delete:all":       "Delete all AI skills",
+    "skill:contribution:create": "Create AI skill contributions",
+    "skill:contribution:review": "Review AI skill contributions",
 
     # Organization
     "org:departments:read":   "View departments",
@@ -167,6 +173,8 @@ PERMISSION_DESCRIPTIONS: dict[str, str] = {
     "skill:edit:all":         "Edit any AI skill in the system.",
     "skill:delete:own_dept":  "Delete AI skills belonging to your department.",
     "skill:delete:all":       "Delete any AI skill. Dangerous.",
+    "skill:contribution:create": "Propose changes to AI skills via contributions.",
+    "skill:contribution:review": "Approve or reject proposed AI skill contributions.",
 
     # Organization
     "org:departments:read":   "View the list of departments and their details. Required for most admin views.",
