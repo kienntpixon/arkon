@@ -344,8 +344,8 @@ async def compile_source_with_agent(
             )
             return state.summary()
         except Exception as e:
-            logger.warning(f"WikiAgent: LLM call failed at step {step}: {e}")
-            break
+            logger.error(f"WikiAgent: LLM call failed at step {step}: {e}")
+            raise
 
         messages.append(assistant_message_from_turn(turn))
 

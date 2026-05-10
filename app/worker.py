@@ -43,25 +43,10 @@ async def get_arq_pool() -> ArqRedis:
 
 
 # ---------------------------------------------------------------------------
-# Progress helper
+# Progress helper (re-exported from utils for backward compatibility)
 # ---------------------------------------------------------------------------
 
-class ProgressTracker:
-    """Updates source.progress + source.progress_message in DB."""
-
-    def __init__(self, source_id: uuid.UUID):
-        self.source_id = source_id
-
-    async def update(self, progress: int, message: str):
-        from app.database import async_session_factory
-        from app.database.models import Source
-        async with async_session_factory() as session:
-            source = await session.get(Source, self.source_id)
-            if source:
-                source.progress = progress
-                source.progress_message = message
-                await session.commit()
-        logger.debug(f"[{self.source_id}] Progress: {progress}% — {message}")
+from app.utils.progress import ProgressTracker  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +60,6 @@ async def ingest_file_task(ctx: dict, source_id: str):
     File must already be uploaded to MinIO before this task is enqueued.
     """
     from app.ai.registry import ProviderRegistry
-    from app.ai.wiki_agent import compile_source_with_agent
     from app.database import async_session_factory
     from app.database.models import KnowledgeType, Source, SourceImage
     from app.services.image_service import extract_images
@@ -192,49 +176,22 @@ async def ingest_file_task(ctx: dict, source_id: str):
                 if kt:
                     kt_slug, kt_name, kt_desc = kt.slug, kt.name, kt.description
 
-            # --- Step 6: Compile into wiki via mini-agent (55-95%) ---
-            await tracker.update(55, "Compiling into wiki (agent)...")
-
-            async def emit(step: int, message: str) -> None:
-                progress = min(95, 55 + step)
-                await tracker.update(progress, f"Compiling: {message}")
-
-            result = await compile_source_with_agent(
-                session=session,
-                source=source,
-                full_text=full_text,
-                kt_slug=kt_slug,
-                kt_name=kt_name,
-                kt_desc=kt_desc,
-                on_progress=emit,
-            )
-            await session.commit()
-            await tracker.update(
-                95,
-                f"Wiki: +{result['pages_created']} pages, ~{result['pages_updated']} updated "
-                f"({result['tool_calls']} tool calls)",
-            )
-
-            # --- Done (100%) ---
-            source.status = "ready"
-            source.progress = 100
-            source.progress_message = "Done"
-            source.error_message = None
+            # --- Step 6: Enqueue MRP pipeline (MAP + REDUCE + PLAN) ---
+            await tracker.update(55, "Queuing compilation pipeline...")
+            pool = await get_arq_pool()
+            job = await pool.enqueue_job("ingest_map_reduce_task", source_id)
+            source.status = "processing"
+            source.progress = 55
+            source.progress_message = "Extraction queued..."
+            if job:
+                source.job_id = job.job_id
             await session.commit()
 
-            logger.success(
-                f"Source {source_id} ingested: {len(images)} images, "
-                f"+{result['pages_created']} pages, ~{result['pages_updated']} updated"
-            )
-            return {
-                "status": "ready",
-                "images": len(images),
-                "pages_created": result["pages_created"],
-                "pages_updated": result["pages_updated"],
-            }
+            logger.info(f"Source {source_id} pre-processing done, MRP task enqueued: {job.job_id if job else 'n/a'}")
+            return {"status": "processing", "images": len(images)}
 
         except BaseException as e:
-            logger.error(f"Ingestion failed for {source_id}: {e}")
+            logger.error(f"Pre-processing failed for {source_id}: {e}")
             error_msg = str(e)[:500]
             progress_msg = f"Error: {str(e)[:200]}"
 
@@ -259,7 +216,6 @@ async def ingest_file_task(ctx: dict, source_id: str):
 
 async def ingest_url_task(ctx: dict, source_id: str):
     """arq task: URL ingestion → wiki compilation."""
-    from app.ai.wiki_agent import compile_source_with_agent
     from app.database import async_session_factory
     from app.database.models import KnowledgeType, Source
     from app.services.kb_service import _extract_text_from_url
@@ -305,38 +261,18 @@ async def ingest_url_task(ctx: dict, source_id: str):
                 if kt:
                     kt_slug, kt_name, kt_desc = kt.slug, kt.name, kt.description
 
-            await tracker.update(55, "Compiling into wiki (agent)...")
-
-            async def emit(step: int, message: str) -> None:
-                progress = min(95, 55 + step)
-                await tracker.update(progress, f"Compiling: {message}")
-
-            result = await compile_source_with_agent(
-                session=session,
-                source=source,
-                full_text=full_text,
-                kt_slug=kt_slug,
-                kt_name=kt_name,
-                kt_desc=kt_desc,
-                on_progress=emit,
-            )
+            await tracker.update(55, "Queuing compilation pipeline...")
+            pool = await get_arq_pool()
+            job = await pool.enqueue_job("ingest_map_reduce_task", source_id)
+            source.status = "processing"
+            source.progress = 55
+            source.progress_message = "Extraction queued..."
+            if job:
+                source.job_id = job.job_id
             await session.commit()
 
-            source.status = "ready"
-            source.progress = 100
-            source.progress_message = "Done"
-            source.error_message = None
-            await session.commit()
-
-            logger.success(
-                f"URL source {source_id} ingested: "
-                f"+{result['pages_created']} pages, ~{result['pages_updated']} updated"
-            )
-            return {
-                "status": "ready",
-                "pages_created": result["pages_created"],
-                "pages_updated": result["pages_updated"],
-            }
+            logger.info(f"URL source {source_id} pre-processing done, MRP task enqueued: {job.job_id if job else 'n/a'}")
+            return {"status": "processing"}
 
         except BaseException as e:
             logger.error(f"URL ingestion failed for {source_id}: {e}")
@@ -709,12 +645,185 @@ async def reembed_all_pages_task(ctx: dict, job_id: str) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# MRP arq tasks
+# ---------------------------------------------------------------------------
+
+async def ingest_map_reduce_task(ctx: dict, source_id: str):
+    """
+    arq task: Phase 0-2 of MRP pipeline (Triage + MAP + REDUCE).
+
+    Reads source.full_text and outline_json (set by ingest_file_task / ingest_url_task),
+    runs parallel chunk extraction, entity deduplication, KB reconciliation, and
+    produces a Compilation Plan saved to source_compilation_plans.
+
+    If mrp_auto_approve_plan=True → immediately enqueues ingest_refine_task.
+    Otherwise → sets source.status='plan_ready' and waits for human approval via API.
+    """
+    from app.ai.mrp.pipeline import run_mrp_pipeline
+    from app.ai.registry import ProviderRegistry
+    from app.database import async_session_factory
+    from app.database.models import KnowledgeType, Source
+
+    sid = uuid.UUID(source_id)
+    tracker = ProgressTracker(sid)
+
+    async with async_session_factory() as session:
+        source = await session.get(Source, sid)
+        if not source:
+            raise ValueError(f"Source {source_id} not found")
+        if not source.full_text:
+            raise ValueError(f"Source {source_id} has no full_text — run pre-processing first")
+
+        try:
+            source.status = "processing"
+            source.progress = 56
+            source.progress_message = "Extracting knowledge from document..."
+            await session.commit()
+
+            registry = ProviderRegistry(session)
+
+            kt_slug = kt_name = kt_desc = None
+            if source.knowledge_type_id:
+                kt = await session.get(KnowledgeType, source.knowledge_type_id)
+                if kt:
+                    kt_slug, kt_name, kt_desc = kt.slug, kt.name, kt.description
+
+            result = await run_mrp_pipeline(
+                session=session,
+                source=source,
+                full_text=source.full_text,
+                tracker=tracker,
+                registry=registry,
+                kt_slug=kt_slug,
+                kt_name=kt_name,
+                kt_desc=kt_desc,
+            )
+
+            if result.get("status") == "plan_ready":
+                src = await session.get(Source, sid)
+                if src:
+                    src.status = "plan_ready"
+                    src.progress = 80
+                    src.progress_message = "Compilation plan ready — awaiting review"
+                    await session.commit()
+                logger.info(f"Source {source_id} plan ready: {result.get('plan_id')}")
+            elif result.get("status") == "plan_auto_approved":
+                logger.info(f"Source {source_id} plan auto-approved, refine task enqueued")
+            else:
+                logger.info(f"Source {source_id} map-reduce result: {result}")
+
+            return result
+
+        except BaseException as e:
+            logger.error(f"MAP-REDUCE failed for {source_id}: {e}")
+            error_msg = str(e)[:500]
+
+            async def _mark_error_mr() -> None:
+                from app.database import async_session_factory as _sf
+                from app.database.models import Source as _Source
+                async with _sf() as err_session:
+                    src = await err_session.get(_Source, sid)
+                    if src:
+                        src.status = "error"
+                        src.error_message = error_msg
+                        src.progress = 0
+                        src.progress_message = f"Error: {str(e)[:200]}"
+                        await err_session.commit()
+
+            try:
+                await asyncio.shield(_mark_error_mr())
+            except Exception:
+                pass
+            raise
+
+
+async def ingest_refine_task(ctx: dict, source_id: str):
+    """
+    arq task: Phase 3-5 of MRP pipeline (REFINE + VERIFY + COMMIT).
+
+    Enqueued by either:
+    - Plan approval API endpoint (POST /sources/{id}/plan/approve)
+    - Auto-approve from ingest_map_reduce_task when mrp_auto_approve_plan=True
+    """
+    from app.ai.mrp.pipeline import run_refine_pipeline
+    from app.ai.registry import ProviderRegistry
+    from app.database import async_session_factory
+    from app.database.models import KnowledgeType, Source
+
+    sid = uuid.UUID(source_id)
+    tracker = ProgressTracker(sid)
+
+    async with async_session_factory() as session:
+        source = await session.get(Source, sid)
+        if not source:
+            raise ValueError(f"Source {source_id} not found")
+        if not source.full_text:
+            raise ValueError(f"Source {source_id} has no full_text")
+
+        try:
+            source.status = "processing"
+            source.progress = 78
+            source.progress_message = "Writing wiki pages..."
+            await session.commit()
+
+            registry = ProviderRegistry(session)
+
+            kt_slug = kt_name = kt_desc = None
+            if source.knowledge_type_id:
+                kt = await session.get(KnowledgeType, source.knowledge_type_id)
+                if kt:
+                    kt_slug, kt_name, kt_desc = kt.slug, kt.name, kt.description
+
+            result = await run_refine_pipeline(
+                session=session,
+                source=source,
+                full_text=source.full_text,
+                tracker=tracker,
+                registry=registry,
+                kt_slug=kt_slug,
+                kt_name=kt_name,
+                kt_desc=kt_desc,
+            )
+
+            logger.success(
+                f"Source {source_id} MRP complete: "
+                f"+{result.get('pages_created', 0)} created, "
+                f"~{result.get('pages_updated', 0)} updated"
+            )
+            return result
+
+        except BaseException as e:
+            logger.error(f"REFINE failed for {source_id}: {e}")
+            error_msg = str(e)[:500]
+
+            async def _mark_error_refine() -> None:
+                from app.database import async_session_factory as _sf
+                from app.database.models import Source as _Source
+                async with _sf() as err_session:
+                    src = await err_session.get(_Source, sid)
+                    if src:
+                        src.status = "error"
+                        src.error_message = error_msg
+                        src.progress = 0
+                        src.progress_message = f"Error: {str(e)[:200]}"
+                        await err_session.commit()
+
+            try:
+                await asyncio.shield(_mark_error_refine())
+            except Exception:
+                pass
+            raise
+
+
 class WorkerSettings:
     """arq worker configuration."""
 
     functions = [
         ingest_file_task,
         ingest_url_task,
+        ingest_map_reduce_task,
+        ingest_refine_task,
         reembed_all_pages_task,
     ]
     redis_settings = _get_redis_settings()

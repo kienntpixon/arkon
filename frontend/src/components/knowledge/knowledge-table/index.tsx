@@ -26,6 +26,7 @@ import { KnowledgeType, Department, Source } from "./types";
 import { fileIcons, getFileExt } from "./utils";
 import { StatusDot } from "./status-dot";
 import { EditSourceDialog } from "./edit-source-dialog";
+import { PlanReviewDialog } from "./plan-review-dialog";
 
 type Props = {
   sources: Source[];
@@ -56,6 +57,7 @@ export function KnowledgeTable({
 }: Props) {
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [editSource, setEditSource] = React.useState<Source | null>(null);
+  const [reviewPlanSource, setReviewPlanSource] = React.useState<Source | null>(null);
   const [retryingIds, setRetryingIds] = React.useState<Set<string>>(new Set());
   const [searchInput, setSearchInput] = React.useState(search);
 
@@ -265,6 +267,14 @@ export function KnowledgeTable({
                           <span className="material-symbols-outlined mr-2" style={{ fontSize: 16 }}>edit</span>
                           Edit
                         </DropdownMenuItem>
+                        {source.status === "plan_ready" && (
+                          <DropdownMenuItem onClick={() => setReviewPlanSource(source)}>
+                            <span className="material-symbols-outlined mr-2 text-blue-500" style={{ fontSize: 16 }}>
+                              fact_check
+                            </span>
+                            Review Plan
+                          </DropdownMenuItem>
+                        )}
                         {source.status === "error" && (
                           <DropdownMenuItem
                             onClick={() => handleRetry(source.id)}
@@ -353,6 +363,14 @@ export function KnowledgeTable({
           departments={departments}
           onClose={() => setEditSource(null)}
           onSaved={() => { setEditSource(null); onRefresh(); }}
+        />
+      )}
+
+      {reviewPlanSource && (
+        <PlanReviewDialog
+          source={reviewPlanSource}
+          onClose={() => setReviewPlanSource(null)}
+          onDone={() => { setReviewPlanSource(null); onRefresh(); }}
         />
       )}
     </div>

@@ -485,8 +485,12 @@ async def retry_source(
     )).scalar_one_or_none()
     if not source:
         raise HTTPException(status_code=404, detail="Source not found")
-    if source.status != "error":
-        raise HTTPException(status_code=400, detail="Retry is only allowed for sources in error status")
+    allowed_statuses = ("error", "plan_ready")
+    if source.status not in allowed_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Retry is only allowed for sources in {allowed_statuses} status",
+        )
     if source.source_type == "url" and not source.url:
         raise HTTPException(status_code=400, detail="Source has no URL to retry")
     if source.source_type == "file" and not source.minio_key:
@@ -499,7 +503,14 @@ async def retry_source(
     await db.flush()
 
     pool = await get_arq_pool()
-    task_name = "ingest_url_task" if source.source_type == "url" else "ingest_file_task"
+    # Route to the right task based on pipeline phase
+    pipeline_phase = source.pipeline_phase
+    if pipeline_phase in ("refine", "verify", "commit"):
+        task_name = "ingest_refine_task"
+    elif pipeline_phase in ("map", "reduce", "plan_review") or source.status == "plan_ready":
+        task_name = "ingest_map_reduce_task"
+    else:
+        task_name = "ingest_url_task" if source.source_type == "url" else "ingest_file_task"
     job = await pool.enqueue_job(task_name, str(source_id))
 
     if job:
@@ -514,6 +525,141 @@ async def retry_source(
     )).scalar_one()
     logger.info(f"Queued retry job {job.job_id if job else 'N/A'} for source {source_id}")
     return _to_response(source)
+
+
+# ---------------------------------------------------------------------------
+# Compilation Plan review endpoints (MRP Phase 2.5)
+# ---------------------------------------------------------------------------
+
+class PlanApproveRequest(BaseModel):
+    note: Optional[str] = None
+    modified_plan: Optional[dict] = None
+
+
+class PlanRejectRequest(BaseModel):
+    note: str
+
+
+@router.get("/sources/{source_id}/plan")
+async def get_compilation_plan(
+    source_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _user: Employee = require_permission("doc:read"),
+):
+    """Return the current compilation plan for a source (MRP Phase 2.5)."""
+    from app.database.models import SourceCompilationPlan
+    plan = (await db.execute(
+        select(SourceCompilationPlan).where(SourceCompilationPlan.source_id == source_id)
+    )).scalar_one_or_none()
+    if not plan:
+        raise HTTPException(status_code=404, detail="No compilation plan found for this source")
+
+    plan_json = dict(plan.plan_json or {})
+    # Strip internal keys before returning
+    plan_json.pop("_claims", None)
+    plan_json.pop("_entities", None)
+    plan_json.pop("_concepts", None)
+
+    return {
+        "id": str(plan.id),
+        "source_id": str(plan.source_id),
+        "status": plan.status,
+        "plan": plan_json,
+        "created_at": plan.created_at.isoformat(),
+        "reviewed_at": plan.reviewed_at.isoformat() if plan.reviewed_at else None,
+        "review_note": plan.review_note,
+    }
+
+
+@router.post("/sources/{source_id}/plan/approve")
+async def approve_compilation_plan(
+    source_id: uuid.UUID,
+    body: PlanApproveRequest,
+    db: AsyncSession = Depends(get_db),
+    user: Employee = require_permission("doc:edit"),
+):
+    """Approve (and optionally modify) the compilation plan, then enqueue REFINE task."""
+    from datetime import datetime, timezone
+
+    from app.database.models import SourceCompilationPlan
+
+    plan = (await db.execute(
+        select(SourceCompilationPlan).where(SourceCompilationPlan.source_id == source_id)
+    )).scalar_one_or_none()
+    if not plan:
+        raise HTTPException(status_code=404, detail="No plan found for this source")
+    if plan.status != "pending_review":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Plan is not pending review (status={plan.status})",
+        )
+
+    if body.modified_plan:
+        # Preserve internal keys from original plan
+        internal_keys = {k: plan.plan_json[k] for k in ("_claims", "_entities", "_concepts") if k in plan.plan_json}
+        merged = {**body.modified_plan, **internal_keys}
+        plan.plan_json = merged
+
+    plan.status = "approved"
+    plan.reviewed_by = user.id
+    plan.review_note = body.note
+    plan.reviewed_at = datetime.now(timezone.utc)
+
+    source = await db.get(Source, source_id)
+    if source:
+        source.status = "processing"
+        source.progress = 78
+        source.progress_message = "Plan approved — compiling wiki pages..."
+
+    await db.flush()
+
+    pool = await get_arq_pool()
+    job = await pool.enqueue_job("ingest_refine_task", str(source_id))
+
+    if job and source:
+        source.job_id = job.job_id
+    await db.commit()
+
+    logger.info(f"Plan approved for source {source_id} by user {user.id}, refine job: {job.job_id if job else 'N/A'}")
+    return {"approved": True, "job_id": job.job_id if job else None}
+
+
+@router.post("/sources/{source_id}/plan/reject")
+async def reject_compilation_plan(
+    source_id: uuid.UUID,
+    body: PlanRejectRequest,
+    db: AsyncSession = Depends(get_db),
+    user: Employee = require_permission("doc:edit"),
+):
+    """Reject the compilation plan. Source moves to error status."""
+    from datetime import datetime, timezone
+
+    from app.database.models import SourceCompilationPlan
+
+    plan = (await db.execute(
+        select(SourceCompilationPlan).where(SourceCompilationPlan.source_id == source_id)
+    )).scalar_one_or_none()
+    if not plan:
+        raise HTTPException(status_code=404, detail="No plan found for this source")
+    if plan.status != "pending_review":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Plan is not pending review (status={plan.status})",
+        )
+
+    plan.status = "rejected"
+    plan.reviewed_by = user.id
+    plan.review_note = body.note
+    plan.reviewed_at = datetime.now(timezone.utc)
+
+    source = await db.get(Source, source_id)
+    if source:
+        source.status = "error"
+        source.error_message = f"Compilation plan rejected: {body.note}"
+
+    await db.commit()
+    logger.info(f"Plan rejected for source {source_id} by user {user.id}: {body.note}")
+    return {"rejected": True}
 
 
 @router.delete("/sources/{source_id}")

@@ -109,6 +109,14 @@ class Source(Base):
     progress: Mapped[int] = mapped_column(Integer, default=0)
     progress_message: Mapped[Optional[str]] = mapped_column(String(500))
     job_id: Mapped[Optional[str]] = mapped_column(String(200))
+    pipeline_strategy: Mapped[Optional[str]] = mapped_column(
+        String(20), nullable=True,
+        comment="single_pass | standard | hierarchical — set by Phase 0 triage",
+    )
+    pipeline_phase: Mapped[Optional[str]] = mapped_column(
+        String(30), nullable=True,
+        comment="Current MRP phase: map | reduce | plan_review | refine | verify | commit",
+    )
     # Heading-based TOC tree (PageIndex-style) built at ingest time from extracted markdown.
     # Schema: [{"title": str, "level": int, "page": int, "char_start": int, "char_end": int, "children": [...]}]
     outline_json: Mapped[Optional[list]] = mapped_column(JSONB)
@@ -183,6 +191,70 @@ class SourceImage(Base):
     )
 
     source: Mapped["Source"] = relationship()
+
+
+# ---------------------------------------------------------------------------
+# MRP Pipeline — MAP/REDUCE/PLAN/REFINE/VERIFY compilation state
+# ---------------------------------------------------------------------------
+
+class SourceChunkExtract(Base):
+    """Phase 1 MAP output: structured knowledge extracted from one document chunk.
+
+    Each row corresponds to a ~20k-char section of the source document.
+    Stored immediately after extraction so the pipeline can resume if interrupted.
+    """
+    __tablename__ = "source_chunk_extracts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sources.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    start_char: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_char: Mapped[int] = mapped_column(Integer, nullable=False)
+    section_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    extract_json: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("source_id", "chunk_index", name="uq_sce_source_chunk"),
+        Index("ix_sce_source_status", "source_id", "status"),
+    )
+
+    source: Mapped["Source"] = relationship()
+
+
+class SourceCompilationPlan(Base):
+    """Phase 2 REDUCE output: compilation plan listing pages to create/update.
+
+    One plan per source. Status flow:
+    pending_review → approved (→ in_progress → done) | rejected
+    """
+    __tablename__ = "source_compilation_plans"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sources.id", ondelete="CASCADE"),
+        nullable=False, unique=True,
+    )
+    plan_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending_review")
+    reviewed_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("employees.id", ondelete="SET NULL"), nullable=True,
+    )
+    review_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_scp_status", "status"),
+    )
+
+    source: Mapped["Source"] = relationship()
+    reviewer: Mapped[Optional["Employee"]] = relationship(foreign_keys=[reviewed_by])
 
 
 # ---------------------------------------------------------------------------

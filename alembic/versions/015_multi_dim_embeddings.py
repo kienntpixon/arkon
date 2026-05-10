@@ -39,9 +39,13 @@ depends_on = None
 SUPPORTED_DIMENSIONS = (768, 1024, 1536, 3072)
 _HALFVEC_DIMS = {3072}
 
+_VALID_TABLES = frozenset(f"wiki_page_embeddings_{d}" for d in SUPPORTED_DIMENSIONS)
+
 
 def _embedding_table_name(dim: int) -> str:
-    return f"wiki_page_embeddings_{dim}"
+    name = f"wiki_page_embeddings_{dim}"
+    assert name in _VALID_TABLES, f"Unexpected embedding table name: {name}"
+    return name
 
 
 def _embedding_column(dim: int):

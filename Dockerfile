@@ -23,6 +23,11 @@ COPY skills/ ./skills/
 COPY entrypoint.sh ./
 RUN sed -i 's/\r$//' entrypoint.sh && chmod +x entrypoint.sh
 
+RUN groupadd -r appuser && useradd -r -g appuser appuser \
+    && chown -R appuser:appuser /app
+
+USER appuser
+
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
