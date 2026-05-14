@@ -96,6 +96,49 @@ async def set_page_departments(
         )
 
 
+async def add_page_departments(
+    session: AsyncSession,
+    page_id: uuid.UUID,
+    department_ids: list[uuid.UUID],
+) -> None:
+    """UNION dept tags onto a page — used by the ingest pipeline so that pages
+    contributed to by sources from multiple departments accumulate all the
+    relevant tags. Existing tags are preserved.
+    """
+    if not department_ids:
+        return
+    await session.execute(
+        pg_insert(WikiPageDepartment)
+        .values([{"page_id": page_id, "department_id": d} for d in department_ids])
+        .on_conflict_do_nothing()
+    )
+
+
+async def rederive_page_departments_from_sources(
+    session: AsyncSession,
+    page_id: uuid.UUID,
+) -> None:
+    """Recompute dept tags for a page = UNION of departments across all
+    source_ids still referenced by the page. Used after detach so tags reflect
+    the page's current contributing sources (no stale tags from removed sources).
+    """
+    from app.database.models import SourceDepartment
+    page = await session.get(WikiPage, page_id)
+    if page is None:
+        return
+    source_ids = list(page.source_ids or [])
+    if not source_ids:
+        await set_page_departments(session, page_id, [])
+        return
+    rows = (await session.execute(
+        select(SourceDepartment.department_id)
+        .where(SourceDepartment.source_id.in_(source_ids))
+        .distinct()
+    )).all()
+    new_dept_ids = [r[0] for r in rows]
+    await set_page_departments(session, page_id, new_dept_ids)
+
+
 # ---------------------------------------------------------------------------
 # Wikilink parsing & graph maintenance
 # ---------------------------------------------------------------------------
@@ -656,6 +699,7 @@ async def detach_source_from_wiki(
     stmt = select(WikiPage).where(WikiPage.source_ids.any(source_id))  # type: ignore[arg-type]
     pages = list((await session.execute(stmt)).scalars().all())
     deleted_count = 0
+    survivors: list[uuid.UUID] = []
     for page in pages:
         remaining = [sid for sid in (page.source_ids or []) if sid != source_id]
         if not remaining:
@@ -663,6 +707,12 @@ async def detach_source_from_wiki(
             deleted_count += 1
         else:
             page.source_ids = remaining
+            survivors.append(page.id)
+    await session.flush()
+    # Re-derive dept tags from the new source list — a removed source must not
+    # leave behind a "phantom" dept tag if no remaining source belongs to it.
+    for page_id in survivors:
+        await rederive_page_departments_from_sources(session, page_id)
     await session.flush()
     if deleted_count:
         logger.info(f"detach_source_from_wiki({source_id}): deleted {deleted_count} single-source pages")
